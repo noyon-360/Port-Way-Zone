@@ -1,29 +1,43 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Shield, Video, Rocket, BookOpen, ArrowRight, ChevronRight } from "lucide-react";
+import {
+  Shield,
+  Video,
+  Rocket,
+  BookOpen,
+  ArrowRight,
+  ChevronRight,
+} from "lucide-react";
 import Link from "next/link";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Home() {
+  const { user, logout } = useAuth();
+
   const features = [
     {
       title: "The Vault",
-      description: "Secure AES-256 encrypted storage for Client Credentials, API keys, and Store logins.",
+      description:
+        "Secure AES-256 encrypted storage for Client Credentials, API keys, and Store logins.",
       icon: <Shield className="w-6 h-6 text-primary-500" />,
     },
     {
       title: "Bridge Call",
-      description: "Integrated WebRTC/LiveKit module for seamless high-quality meetings with the team.",
+      description:
+        "Integrated WebRTC/LiveKit module for seamless high-quality meetings with the team.",
       icon: <Video className="w-6 h-6 text-primary-500" />,
     },
     {
       title: "Launchpad",
-      description: "The ultimate deployment dashboard with real-time VPS, AWS, and App Store status.",
+      description:
+        "The ultimate deployment dashboard with real-time VPS, AWS, and App Store status.",
       icon: <Rocket className="w-6 h-6 text-primary-500" />,
     },
     {
       title: "DocuCenter",
-      description: "Project-specific Notion-style documentation and wikis tailored to your workflows.",
+      description:
+        "Project-specific Notion-style documentation and wikis tailored to your workflows.",
       icon: <BookOpen className="w-6 h-6 text-primary-500" />,
     },
   ];
@@ -38,16 +52,41 @@ export default function Home() {
           </div>
           <span className="text-xl font-bold tracking-wide">Portway</span>
         </div>
-        <div className="flex items-center gap-4">
-          <Link href="/login">
-            <button className="px-5 py-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors border border-white/10 text-sm font-medium">
-              Sign In
+
+        {user ? (
+          <div className="flex items-center gap-4">
+            <div className="relative group">
+              <button className="px-5 py-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors border border-white/10 text-sm font-medium focus:outline-none">
+                {user.name || "Profile"}
+              </button>
+
+              <div className="absolute right-0 mt-2 w-48 rounded-xl bg-[#1a1a1a] border border-[#2a2a2a] shadow-xl overflow-hidden z-50 opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity duration-200">
+                <button
+                  onClick={logout}
+                  className="w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-white/5 transition-colors"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </div>
+            <Link href="/dashboard">
+              <button className="px-5 py-2 rounded-full bg-primary-600 hover:bg-primary-500 transition-colors text-white text-sm font-medium shadow-lg shadow-primary-600/20 hidden sm:block">
+                Dashboard
+              </button>
+            </Link>
+          </div>
+        ) : (
+          <div className="flex items-center gap-4">
+            <Link href="/login">
+              <button className="px-5 py-2 rounded-full bg-white/5 hover:bg-white/10 transition-colors border border-white/10 text-sm font-medium">
+                Sign In
+              </button>
+            </Link>
+            <button className="px-5 py-2 rounded-full bg-primary-600 hover:bg-primary-500 transition-colors text-white text-sm font-medium shadow-lg shadow-primary-600/20 hidden sm:block">
+              Get Started
             </button>
-          </Link>
-          <button className="px-5 py-2 rounded-full bg-primary-600 hover:bg-primary-500 transition-colors text-white text-sm font-medium shadow-lg shadow-primary-600/20 hidden sm:block">
-            Get Started
-          </button>
-        </div>
+          </div>
+        )}
       </nav>
 
       {/* Hero Section */}
@@ -65,15 +104,18 @@ export default function Home() {
             </span>
             Portway OS is now in beta
           </div>
-          
+
           <h1 className="text-5xl lg:text-7xl font-extrabold tracking-tight mb-6 leading-tight">
             The Unified Client <br className="hidden md:block" />
-            <span className="text-gradient">Onboarding & DevOps</span> <br className="hidden md:block" />
+            <span className="text-gradient">Onboarding & DevOps</span>{" "}
+            <br className="hidden md:block" />
             Orchestrator
           </h1>
-          
+
           <p className="text-lg text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-            Bridge the gap between Account Management and Technical Execution. Collect keys securely, manage deployments swiftly, and communicate clearly — all from a single hub.
+            Bridge the gap between Account Management and Technical Execution.
+            Collect keys securely, manage deployments swiftly, and communicate
+            clearly — all from a single hub.
           </p>
 
           <div className="flex items-center justify-center gap-4 flex-col sm:flex-row">
@@ -90,18 +132,23 @@ export default function Home() {
         </motion.div>
 
         {/* Features Grid */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.2 }}
           className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 w-full max-w-7xl mx-auto mt-24"
         >
           {features.map((feature, idx) => (
-            <div key={idx} className="glass-card p-6 rounded-2xl transition-all hover:-translate-y-2 duration-300 group">
+            <div
+              key={idx}
+              className="glass-card p-6 rounded-2xl transition-all hover:-translate-y-2 duration-300 group"
+            >
               <div className="w-12 h-12 rounded-xl bg-background/80 border border-white/10 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform shadow-inner">
                 {feature.icon}
               </div>
-              <h3 className="text-xl font-semibold text-white mb-2">{feature.title}</h3>
+              <h3 className="text-xl font-semibold text-white mb-2">
+                {feature.title}
+              </h3>
               <p className="text-sm text-slate-400 leading-relaxed mb-6">
                 {feature.description}
               </p>

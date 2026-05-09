@@ -14,8 +14,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Portway | Unified Client Onboarding & DevOps Orchestrator",
-  description: "Bridge the gap between Account Management and Technical Execution. Secure, fast, and reliable.",
+  description:
+    "Bridge the gap between Account Management and Technical Execution. Secure, fast, and reliable.",
 };
+
+import { AuthProvider } from "../contexts/AuthContext";
 
 export default function RootLayout({
   children,
@@ -27,8 +30,11 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
     >
-      <body className="min-h-full flex flex-col bg-background text-foreground selection:bg-primary/30">
-        {children}
+      <body 
+        className="min-h-full flex flex-col bg-background text-foreground selection:bg-primary/30"
+        suppressHydrationWarning
+      >
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );
