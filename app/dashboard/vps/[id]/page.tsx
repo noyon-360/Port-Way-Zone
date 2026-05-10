@@ -113,6 +113,15 @@ export default function VpsDetailsPage() {
   const [isTerminalCollapsed, setIsTerminalCollapsed] = useState(false);
   const [isFilesLoading, setIsFilesLoading] = useState(false);
   
+  // Deployment Configuration States
+  const [projectName, setProjectName] = useState("my-app");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [deployBranch, setDeployBranch] = useState("main");
+  const [projType, setProjType] = useState("node");
+  const [deployPort, setDeployPort] = useState("3000");
+  const [deployDomain, setDeployDomain] = useState("");
+  const [deployStatus, setDeployStatus] = useState("No active deployment");
+  
   // Git State
   const [gitStatus, setGitStatus] = useState<string>("");
   const [gitBranch, setGitBranch] = useState<string>("");
@@ -441,6 +450,47 @@ export default function VpsDetailsPage() {
     }
   };
 
+  const handleDeploy = async () => {
+    if (!repoUrl) return alert("Repository URL is required");
+    
+    setIsDeploying(true);
+    setDeployStatus("Starting deployment...");
+    
+    try {
+      await fetch("http://127.0.0.1:8080/deploy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
+        body: JSON.stringify({
+          user_id: "dev_user",
+          project_name: projectName,
+          repo_url: repoUrl,
+          branch: deployBranch,
+          type: projType,
+          port: deployPort,
+          domain: deployDomain,
+        }),
+      });
+      
+      const interval = setInterval(async () => {
+        try {
+          const sRes = await fetch(`http://127.0.0.1:8080/deploy/status?user_id=dev_user`);
+          const sData = await sRes.json();
+          setDeployStatus(sData.status);
+          if (sData.status.includes("Success") || sData.status.includes("Failed")) {
+            clearInterval(interval);
+            setIsDeploying(false);
+          }
+        } catch (err) {
+          clearInterval(interval);
+          setIsDeploying(false);
+        }
+      }, 2000);
+    } catch (err) {
+      setDeployStatus("Error initiating deployment");
+      setIsDeploying(false);
+    }
+  };
+
   const closeFile = (path: string) => {
     const newOpen = openFiles.filter(f => f !== path);
     setOpenFiles(newOpen);
@@ -724,34 +774,104 @@ export default function VpsDetailsPage() {
               </div>
             ) : sidebarView === "deploy" ? (
               <div className="flex-1 p-8 overflow-y-auto animate-in slide-in-from-right-4 duration-300">
-                <div className="max-w-2xl mx-auto space-y-8">
-                   <div className="bg-[#18181a] border border-zinc-800/50 rounded-3xl p-8">
-                      <h2 className="text-xl font-bold mb-6 flex items-center gap-2">
-                        <Rocket className="w-6 h-6 text-indigo-400" /> Production Deployment
-                      </h2>
-                      <div className="space-y-6">
-                        <div className="grid grid-cols-2 gap-6">
-                          <div>
-                            <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2">Repository</label>
-                            <input type="text" placeholder="user/repo" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none" />
-                          </div>
-                          <div>
-                            <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2">Branch</label>
-                            <input type="text" placeholder="main" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none" />
-                          </div>
+                <div className="max-w-3xl mx-auto space-y-8 pb-12">
+                   <div className="bg-[#18181a] border border-zinc-800/50 rounded-3xl p-8 shadow-2xl">
+                      <div className="flex items-center justify-between mb-8">
+                        <div>
+                          <h2 className="text-2xl font-bold flex items-center gap-2">
+                            <Rocket className="w-7 h-7 text-indigo-500" /> Cloud Deployment
+                          </h2>
+                          <p className="text-zinc-500 text-xs mt-1">Configure and launch your application to the VPS</p>
                         </div>
-                        <button className="w-full py-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold transition-all flex items-center justify-center gap-2">
-                           <Play className="w-5 h-5" /> Deploy Now
-                        </button>
+                        <div className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${deployStatus.includes('Success') ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : deployStatus.includes('Failed') ? "bg-red-500/10 text-red-500 border-red-500/20" : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"}`}>
+                           {deployStatus}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-8">
+                        <div className="space-y-6">
+                           <div>
+                              <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Project Name</label>
+                              <input value={projectName} onChange={(e) => setProjectName(e.target.value)} type="text" placeholder="e.g. my-awesome-app" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
+                           </div>
+                           <div>
+                              <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Repository URL</label>
+                              <div className="relative">
+                                <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
+                                <input value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} type="text" placeholder="https://github.com/user/repo" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl pl-11 pr-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
+                              </div>
+                           </div>
+                           <div className="grid grid-cols-2 gap-4">
+                              <div>
+                                <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Branch</label>
+                                <input value={deployBranch} onChange={(e) => setDeployBranch(e.target.value)} type="text" placeholder="main" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
+                              </div>
+                              <div>
+                                <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Port</label>
+                                <input value={deployPort} onChange={(e) => setDeployPort(e.target.value)} type="text" placeholder="3000" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
+                              </div>
+                           </div>
+                        </div>
+
+                        <div className="space-y-6">
+                           <div>
+                              <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Application Category</label>
+                              <div className="grid grid-cols-2 gap-2">
+                                 {['node', 'go', 'python', 'static'].map((type) => (
+                                   <button 
+                                     key={type}
+                                     onClick={() => setProjType(type)}
+                                     className={`py-2.5 rounded-xl border text-[11px] font-bold uppercase transition-all ${projType === type ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20" : "bg-[#0d0d0e] border-zinc-800 text-zinc-500 hover:border-zinc-700"}`}
+                                   >
+                                     {type}
+                                   </button>
+                                 ))}
+                              </div>
+                           </div>
+                           <div>
+                              <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Custom Domain</label>
+                              <div className="relative">
+                                <Layout className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
+                                <input value={deployDomain} onChange={(e) => setDeployDomain(e.target.value)} type="text" placeholder="api.yourdomain.com" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl pl-11 pr-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
+                              </div>
+                           </div>
+                           <div className="pt-2">
+                             <button 
+                               onClick={handleDeploy} 
+                               disabled={isDeploying}
+                               className={`w-full py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-3 shadow-xl ${isDeploying ? "bg-zinc-800 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white hover:scale-[1.02] active:scale-95"}`}
+                             >
+                               {isDeploying ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
+                               {isDeploying ? "Deployment in Progress..." : "Launch to Production"}
+                             </button>
+                           </div>
+                        </div>
                       </div>
                    </div>
-                   <div className="bg-[#0d0d0e] border border-zinc-800/50 rounded-2xl p-4 font-mono text-[11px] text-zinc-500 h-64 overflow-y-auto">
-                      <div className="mb-2 text-zinc-400 font-bold uppercase tracking-widest text-[9px]">Deployment Pipeline Status</div>
-                      <div className="space-y-1">
-                        <div>[02:34:12] Initializing pipeline...</div>
-                        <div className="text-emerald-500">[02:34:15] SSH Connection Established</div>
-                        <div>[02:34:16] Pulling repository...</div>
-                        <div className="text-emerald-500">[02:34:25] Repository cloned successfully</div>
+
+                   <div className="bg-[#0d0d0e] border border-zinc-800/50 rounded-3xl p-6 font-mono text-[11px]">
+                      <div className="flex items-center justify-between mb-4">
+                        <span className="text-zinc-400 font-bold uppercase tracking-widest text-[9px] flex items-center gap-2">
+                           <div className={`w-1.5 h-1.5 rounded-full ${isDeploying ? "bg-indigo-500 animate-pulse" : "bg-zinc-700"}`} />
+                           Deployment Pipeline Log
+                        </span>
+                        <span className="text-zinc-600 text-[10px]">v1.2.0-stable</span>
+                      </div>
+                      <div className="space-y-1.5 max-h-64 overflow-y-auto custom-scrollbar pr-2">
+                         <div className="text-zinc-600">[SYSTEM] Pipeline initialized...</div>
+                         <div className="text-zinc-600">[AUTH] User dev_user verified</div>
+                         <div className={`transition-all duration-500 ${deployStatus.includes('Starting') ? "text-indigo-400" : "text-zinc-500"}`}>
+                           [WAIT] Requesting resource allocation from VPS...
+                         </div>
+                         {deployStatus !== "No active deployment" && (
+                           <div className="text-indigo-400 animate-pulse">[ACTION] {deployStatus}</div>
+                         )}
+                         {deployStatus.includes('Success') && vps && (
+                           <div className="text-emerald-500 font-bold mt-2">✨ DEPLOYMENT SUCCESSFUL: Application is live at {deployDomain || vps.ip}:{deployPort}</div>
+                         )}
+                         {deployStatus.includes('Failed') && (
+                           <div className="text-red-500 font-bold mt-2">❌ DEPLOYMENT FAILED: Check system logs for details.</div>
+                         )}
                       </div>
                    </div>
                 </div>
