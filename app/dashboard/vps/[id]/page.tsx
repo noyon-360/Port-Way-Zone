@@ -137,6 +137,15 @@ export default function VpsDetailsPage() {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [deployStatus, setDeployStatus] = useState("No active deployment");
+  const [setupStep, setSetupStep] = useState(1);
+  const [isDeployWizardOpen, setIsDeployWizardOpen] = useState(false);
+  const [useDocker, setUseDocker] = useState(false);
+  const [deployWizardConfig, setDeployWizardConfig] = useState<{ path: string, source: "local" | "git" }>({ path: "", source: "git" });
+  const [activeDeployTask, setActiveDeployTask] = useState<any>(null);
+  const [gitToken, setGitToken] = useState("");
+  const [buildCommand, setBuildCommand] = useState("");
+  const [startCommand, setStartCommand] = useState("");
+
   
   // Git State
   const [gitStatus, setGitStatus] = useState<string>("");
@@ -571,33 +580,50 @@ export default function VpsDetailsPage() {
     }
   };
 
-  const handleDeploy = async () => {
-    if (!repoUrl) return alert("Repository URL is required");
+  const handleDeploy = async (configOverride?: any) => {
+    const isGit = configOverride ? configOverride.deploy_source === "git" : true;
+    if (isGit && !repoUrl && !configOverride) return alert("Repository URL is required");
     
     setIsDeploying(true);
     setDeployStatus("Starting deployment...");
     
+    const payload = configOverride || {
+      user_id: "dev_user",
+      project_name: projectName,
+      repo_url: repoUrl,
+      branch: deployBranch,
+      type: projType,
+      port: deployPort,
+      domain: deployDomain,
+      deploy_source: "git",
+      git_token: gitToken,
+      use_docker: useDocker,
+      build_command: buildCommand,
+      start_command: startCommand
+    };
+
     try {
-      await fetch("http://127.0.0.1:8080/deploy", {
+      const res = await fetch("http://127.0.0.1:8080/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({
-          user_id: "dev_user",
-          project_name: projectName,
-          repo_url: repoUrl,
-          branch: deployBranch,
-          type: projType,
-          port: deployPort,
-          domain: deployDomain,
-        }),
+        body: JSON.stringify(payload),
       });
       
+      if (!res.ok) throw new Error("Failed to initiate deployment");
+
       const interval = setInterval(async () => {
         try {
           const sRes = await fetch(`http://127.0.0.1:8080/deploy/status?user_id=dev_user`);
+          if (!sRes.ok) {
+             clearInterval(interval);
+             setIsDeploying(false);
+             return;
+          }
           const sData = await sRes.json();
-          setDeployStatus(sData.status);
-          if (sData.status.includes("Success") || sData.status.includes("Failed")) {
+          setActiveDeployTask(sData);
+          setDeployStatus(sData.Status);
+          
+          if (sData.Status.includes("Success") || sData.Status.includes("Failed")) {
             clearInterval(interval);
             setIsDeploying(false);
           }
@@ -605,12 +631,26 @@ export default function VpsDetailsPage() {
           clearInterval(interval);
           setIsDeploying(false);
         }
-      }, 2000);
-    } catch (err) {
-      setDeployStatus("Error initiating deployment");
+      }, 1500);
+    } catch (err: any) {
+      setDeployStatus("Error: " + err.message);
       setIsDeploying(false);
     }
   };
+
+  const handleConfirmDeployment = async () => {
+    try {
+      const res = await fetch(`http://127.0.0.1:8080/deploy/confirm?user_id=dev_user&project_name=${projectName}`, {
+        method: "POST",
+        headers: { "X-User-ID": "dev_user" }
+      });
+      if (!res.ok) throw new Error("Failed to confirm deployment");
+      setDeployStatus("Confirmation received. Resuming...");
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
 
   const closeFile = (path: string) => {
     const newOpen = openFiles.filter(f => f !== path);
@@ -929,108 +969,297 @@ export default function VpsDetailsPage() {
               </div>
             ) : sidebarView === "deploy" ? (
               <div className="flex-1 p-8 overflow-y-auto animate-in slide-in-from-right-4 duration-300">
-                <div className="max-w-3xl mx-auto space-y-8 pb-12">
-                   <div className="bg-[#18181a] border border-zinc-800/50 rounded-3xl p-8 shadow-2xl">
-                      <div className="flex items-center justify-between mb-8">
+                <div className="max-w-4xl mx-auto space-y-8 pb-12">
+                   <div className="bg-[#18181a] border border-zinc-800/50 rounded-3xl p-8 shadow-2xl overflow-hidden relative">
+                      {/* Progress Bar Background */}
+                      {isDeploying && activeDeployTask && (
+                        <div className="absolute top-0 left-0 right-0 h-1 bg-zinc-800">
+                           <div 
+                             className="h-full bg-indigo-500 transition-all duration-1000 ease-out" 
+                             style={{ width: `${(activeDeployTask.CurrentStep / activeDeployTask.TotalSteps) * 100}%` }} 
+                           />
+                        </div>
+                      )}
+
+                      <div className="flex items-center justify-between mb-10">
                         <div>
                           <h2 className="text-3xl font-bold flex items-center gap-3">
-                            <Rocket className="w-8 h-8 text-indigo-500" /> Cloud Deployment
+                            <Rocket className={`w-8 h-8 ${isDeploying ? "text-indigo-500 animate-pulse" : "text-indigo-500"}`} /> 
+                            {isDeploying ? "Deploying Project..." : "Cloud Deployment"}
                           </h2>
-                          <p className="text-zinc-500 text-sm mt-1.5">Configure and launch your application to the VPS</p>
+                          <p className="text-zinc-500 text-sm mt-1.5">
+                            {isDeploying ? `Currently at step ${activeDeployTask?.CurrentStep || 0} of ${activeDeployTask?.TotalSteps || 0}` : "Configure and launch your application to the VPS"}
+                          </p>
                         </div>
-                        <div className={`px-5 py-2 rounded-full text-xs font-bold uppercase tracking-widest border ${deployStatus.includes('Success') ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : deployStatus.includes('Failed') ? "bg-red-500/10 text-red-500 border-red-500/20" : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"}`}>
+                        <div className={`px-5 py-2 rounded-full text-xs font-bold uppercase tracking-widest border transition-all ${deployStatus.includes('Success') ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-lg shadow-emerald-500/5" : deployStatus.includes('Failed') ? "bg-red-500/10 text-red-500 border-red-500/20" : "bg-indigo-500/10 text-indigo-400 border-indigo-500/20"}`}>
                            {deployStatus}
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-8">
-                        <div className="space-y-6">
-                           <div>
-                              <label className="text-xs uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Project Name</label>
-                              <input value={projectName} onChange={(e) => setProjectName(e.target.value)} type="text" placeholder="e.g. my-awesome-app" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
+                      {!isDeploying && (
+                        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                           {/* Setup Stepper */}
+                           <div className="flex items-center gap-4 mb-12 max-w-2xl mx-auto">
+                              {[1, 2, 3, 4].map((s) => (
+                                <React.Fragment key={s}>
+                                  <div onClick={() => s < setupStep && setSetupStep(s)} className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs transition-all cursor-pointer ${setupStep === s ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20 scale-110" : setupStep > s ? "bg-emerald-500/20 text-emerald-500" : "bg-zinc-900 text-zinc-600 border border-zinc-800"}`}>
+                                     {setupStep > s ? <CheckCircle2 className="w-4 h-4" /> : s}
+                                  </div>
+                                  {s < 4 && <div className={`flex-1 h-[2px] rounded-full transition-all ${setupStep > s ? "bg-emerald-500/50" : "bg-zinc-800"}`} />}
+                                </React.Fragment>
+                              ))}
                            </div>
-                           <div>
-                              <label className="text-xs uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Repository URL</label>
-                              <div className="relative">
-                                <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
-                                <input value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} type="text" placeholder="https://github.com/user/repo" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl pl-11 pr-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
-                              </div>
-                           </div>
-                           <div className="grid grid-cols-2 gap-4">
-                              <div>
-                                <label className="text-xs uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Branch</label>
-                                <input value={deployBranch} onChange={(e) => setDeployBranch(e.target.value)} type="text" placeholder="main" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
-                              </div>
-                              <div>
-                                <label className="text-xs uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Port</label>
-                                <input value={deployPort} onChange={(e) => setDeployPort(e.target.value)} type="text" placeholder="3000" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
-                              </div>
-                           </div>
-                        </div>
 
-                        <div className="space-y-6">
-                           <div>
-                              <label className="text-xs uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Application Category</label>
-                              <div className="grid grid-cols-2 gap-2">
-                                 {['node', 'go', 'python', 'static'].map((type) => (
-                                   <button 
-                                     key={type}
-                                     onClick={() => setProjType(type)}
-                                     className={`py-3 rounded-xl border text-xs font-bold uppercase transition-all ${projType === type ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20" : "bg-[#0d0d0e] border-zinc-800 text-zinc-500 hover:border-zinc-700"}`}
-                                   >
-                                     {type}
-                                   </button>
-                                 ))}
-                              </div>
+                           <div className="grid grid-cols-1 gap-8 max-w-2xl mx-auto min-h-[340px]">
+                              {setupStep === 1 && (
+                                <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+                                   <div className="bg-indigo-600/5 border border-indigo-500/10 rounded-3xl p-8">
+                                      <h3 className="text-xl font-bold mb-6 flex items-center gap-3"><Rocket className="w-6 h-6 text-indigo-500" /> Project Identity</h3>
+                                      <div className="space-y-6">
+                                         <div>
+                                            <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Project Name</label>
+                                            <input value={projectName} onChange={(e) => setProjectName(e.target.value)} type="text" placeholder="e.g. my-awesome-app" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3.5 text-sm focus:border-indigo-500 outline-none transition-all font-medium" />
+                                         </div>
+                                         <div>
+                                            <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Application Category</label>
+                                            <div className="grid grid-cols-4 gap-3">
+                                               {['auto', 'node', 'go', 'python', 'static', 'php', 'rust', 'other'].map((type) => (
+                                                 <button 
+                                                   key={type}
+                                                   onClick={() => setProjType(type)}
+                                                   className={`py-3 rounded-xl border text-[10px] font-black uppercase transition-all ${projType === type ? "bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-600/20" : "bg-[#0d0d0e] border-zinc-800 text-zinc-500 hover:border-zinc-700"}`}
+                                                 >
+                                                   {type}
+                                                 </button>
+                                               ))}
+                                            </div>
+                                         </div>
+
+                                         {projType === "other" && (
+                                           <div className="space-y-4 animate-in slide-in-from-top-2">
+                                              <div>
+                                                 <label className="text-[9px] uppercase text-zinc-500 font-bold tracking-widest block mb-2">Custom Build Command</label>
+                                                 <input value={buildCommand} onChange={(e) => setBuildCommand(e.target.value)} type="text" placeholder="e.g. npm install && make build" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-xs focus:border-indigo-500 outline-none transition-all" />
+                                              </div>
+                                              <div>
+                                                 <label className="text-[9px] uppercase text-zinc-500 font-bold tracking-widest block mb-2">Custom Start Command</label>
+                                                 <input value={startCommand} onChange={(e) => setStartCommand(e.target.value)} type="text" placeholder="e.g. ./my-binary" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-xs focus:border-indigo-500 outline-none transition-all" />
+                                              </div>
+                                           </div>
+                                         )}
+                                      </div>
+                                   </div>
+                                </div>
+                              )}
+
+                              {setupStep === 2 && (
+                                <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+                                   <div className="bg-indigo-600/5 border border-indigo-500/10 rounded-3xl p-8">
+                                      <h3 className="text-xl font-bold mb-6 flex items-center gap-3"><Globe className="w-6 h-6 text-indigo-500" /> Source Control</h3>
+                                      <div className="space-y-6">
+                                         <div>
+                                            <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Repository URL</label>
+                                            <div className="relative">
+                                              <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
+                                              <input value={repoUrl} onChange={(e) => setRepoUrl(e.target.value)} type="text" placeholder="https://github.com/user/repo" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl pl-11 pr-4 py-3.5 text-sm focus:border-indigo-500 outline-none transition-all" />
+                                            </div>
+                                         </div>
+                                         <div>
+                                            <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Git Token (for private repos)</label>
+                                            <div className="relative">
+                                              <Lock className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
+                                              <input value={gitToken} onChange={(e) => setGitToken(e.target.value)} type="password" placeholder="ghp_xxxxxxxxxxxx" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl pl-11 pr-4 py-3.5 text-sm focus:border-indigo-500 outline-none transition-all" />
+                                            </div>
+                                         </div>
+                                         <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                              <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Branch</label>
+                                              <input value={deployBranch} onChange={(e) => setDeployBranch(e.target.value)} type="text" placeholder="main" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3.5 text-sm focus:border-indigo-500 outline-none transition-all" />
+                                            </div>
+                                            <div>
+                                              <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Port</label>
+                                              <input value={deployPort} onChange={(e) => setDeployPort(e.target.value)} type="text" placeholder="3000" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3.5 text-sm focus:border-indigo-500 outline-none transition-all" />
+                                            </div>
+                                         </div>
+                                      </div>
+                                   </div>
+                                </div>
+                              )}
+
+                              {setupStep === 3 && (
+                                <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+                                   <div className="bg-indigo-600/5 border border-indigo-500/10 rounded-3xl p-8">
+                                      <h3 className="text-xl font-bold mb-6 flex items-center gap-3"><Layout className="w-6 h-6 text-indigo-500" /> Infrastructure</h3>
+                                      <div className="space-y-6">
+                                         <div>
+                                            <label className="text-[10px] uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Custom Domain</label>
+                                            <div className="relative">
+                                              <Layout className="absolute left-4 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-zinc-600" />
+                                              <input value={deployDomain} onChange={(e) => setDeployDomain(e.target.value)} type="text" placeholder="api.yourdomain.com" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl pl-11 pr-4 py-3.5 text-sm focus:border-indigo-500 outline-none transition-all" />
+                                            </div>
+                                         </div>
+                                         <div className="flex items-center justify-between p-5 bg-[#0d0d0e] border border-zinc-800 rounded-2xl">
+                                            <div className="flex items-center gap-4">
+                                               <div className="p-3 bg-indigo-600/10 rounded-xl"><Database className="w-5 h-5 text-indigo-500" /></div>
+                                               <div>
+                                                  <h4 className="font-bold text-sm">Use Docker?</h4>
+                                                  <p className="text-[10px] text-zinc-500">Containerize your application.</p>
+                                               </div>
+                                            </div>
+                                            <button 
+                                              onClick={() => setUseDocker(!useDocker)}
+                                              className={`w-12 h-6 rounded-full relative transition-all ${useDocker ? "bg-indigo-600" : "bg-zinc-800"}`}
+                                            >
+                                              <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${useDocker ? "left-7" : "left-1"}`} />
+                                            </button>
+                                         </div>
+                                      </div>
+                                   </div>
+                                </div>
+                              )}
+
+                              {setupStep === 4 && (
+                                <div className="space-y-6 animate-in zoom-in-95 duration-300">
+                                   <div className="bg-indigo-600/5 border border-indigo-500/10 rounded-3xl p-8 text-center">
+                                      <div className="w-20 h-20 bg-indigo-600/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                                         <CheckCircle2 className="w-10 h-10 text-indigo-500" />
+                                      </div>
+                                      <h3 className="text-2xl font-bold mb-2">Ready to Launch</h3>
+                                      <p className="text-zinc-500 text-sm mb-8">Review your configuration before initiating the secure deployment pipeline.</p>
+                                      
+                                      <div className="grid grid-cols-2 gap-4 text-left">
+                                         <div className="p-4 bg-[#0d0d0e] border border-zinc-800 rounded-2xl">
+                                            <span className="text-[9px] uppercase font-black text-zinc-600 block mb-1">Project</span>
+                                            <span className="text-sm font-bold text-zinc-300">{projectName}</span>
+                                         </div>
+                                         <div className="p-4 bg-[#0d0d0e] border border-zinc-800 rounded-2xl">
+                                            <span className="text-[9px] uppercase font-black text-zinc-600 block mb-1">Platform</span>
+                                            <span className="text-sm font-bold text-indigo-400 uppercase">{projType}</span>
+                                         </div>
+                                      </div>
+                                   </div>
+                                </div>
+                              )}
                            </div>
-                           <div>
-                              <label className="text-xs uppercase text-zinc-500 font-bold tracking-widest block mb-2.5">Custom Domain</label>
-                              <div className="relative">
-                                <Layout className="absolute left-4 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-zinc-600" />
-                                <input value={deployDomain} onChange={(e) => setDeployDomain(e.target.value)} type="text" placeholder="api.yourdomain.com" className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl pl-11 pr-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all" />
-                              </div>
-                           </div>
-                           <div className="pt-2">
-                             <button 
-                               onClick={handleDeploy} 
-                               disabled={isDeploying}
-                               className={`w-full py-4 rounded-2xl font-bold transition-all flex items-center justify-center gap-3 shadow-xl ${isDeploying ? "bg-zinc-800 text-zinc-500 cursor-not-allowed" : "bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white hover:scale-[1.02] active:scale-95"}`}
-                             >
-                               {isDeploying ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
-                               {isDeploying ? "Deployment in Progress..." : "Launch to Production"}
-                             </button>
+
+                           <div className="flex items-center justify-between mt-10 max-w-2xl mx-auto pt-6 border-t border-zinc-800/30">
+                              <button 
+                                onClick={() => setSetupStep(prev => Math.max(1, prev - 1))}
+                                disabled={setupStep === 1}
+                                className="px-8 py-3 text-sm font-bold text-zinc-500 hover:text-white disabled:opacity-0 transition-all"
+                              >
+                                Back
+                              </button>
+                              <button 
+                                onClick={setupStep === 4 ? () => handleDeploy() : () => setSetupStep(prev => prev + 1)}
+                                className="px-10 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-bold shadow-xl shadow-indigo-600/20 transition-all active:scale-95 flex items-center gap-3"
+                              >
+                                {setupStep === 4 ? "Launch to Production" : "Continue"}
+                                {setupStep === 4 ? <Play className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                              </button>
                            </div>
                         </div>
-                      </div>
+                      )}
+
+                      {isDeploying && activeDeployTask && (
+                        <div className="py-12 flex flex-col items-center justify-center animate-in zoom-in-95 duration-500">
+                           <div className="relative w-32 h-32 mb-8">
+                              <div className="absolute inset-0 rounded-full border-4 border-indigo-500/20" />
+                              <div className="absolute inset-0 rounded-full border-4 border-t-indigo-500 animate-spin" />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                 <Rocket className="w-12 h-12 text-indigo-500" />
+                              </div>
+                           </div>
+                           <h3 className="text-2xl font-bold text-white mb-2">{activeDeployTask.StepName || "Processing..."}</h3>
+                           
+                           {activeDeployTask.Status === "waiting" ? (
+                             <div className="flex flex-col items-center animate-in fade-in slide-in-from-bottom-2">
+                               <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl mb-6 text-center max-w-md">
+                                 <p className="text-indigo-400 text-sm font-bold mb-1">
+                                    Step Completed: {activeDeployTask.StepName}
+                                 </p>
+                                 <p className="text-zinc-500 text-xs italic">
+                                    Please verify the progress and click below to proceed to the next stage.
+                                 </p>
+                               </div>
+                               <div className="flex gap-4">
+                                 <button 
+                                   onClick={handleConfirmDeployment}
+                                   className="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-600/20 transition-all active:scale-95 flex items-center gap-2"
+                                 >
+                                   <CheckCircle2 className="w-4 h-4" /> Approve & Continue
+                                 </button>
+                                 <button 
+                                   onClick={() => setIsDeploying(false)}
+                                   className="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded-xl text-sm font-bold transition-all active:scale-95"
+                                 >
+                                   Abort
+                                 </button>
+                               </div>
+                             </div>
+                           ) : (
+                             <p className="text-zinc-500 text-sm max-w-md text-center">
+                               Executing <span className="text-white font-bold">{activeDeployTask.StepName}</span> on <span className="text-indigo-400 font-mono">{vps.ip}</span>. 
+                               Please wait for completion.
+                             </p>
+                           )}
+                        </div>
+                      )}
                    </div>
 
-                   <div className="bg-[#0d0d0e] border border-zinc-800/50 rounded-3xl p-8 font-mono text-xs">
-                      <div className="flex items-center justify-between mb-5">
+                   <div className="bg-[#0d0d0e] border border-zinc-800/50 rounded-3xl overflow-hidden flex flex-col shadow-xl">
+                      <div className="px-8 py-5 border-b border-zinc-800 flex items-center justify-between bg-[#111113]">
                         <span className="text-zinc-400 font-bold uppercase tracking-widest text-[11px] flex items-center gap-2.5">
-                           <div className={`w-2 h-2 rounded-full ${isDeploying ? "bg-indigo-500 animate-pulse" : "bg-zinc-700"}`} />
+                           <div className={`w-2 h-2 rounded-full ${isDeploying ? "bg-indigo-500 animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.8)]" : "bg-zinc-700"}`} />
                            Deployment Pipeline Log
                         </span>
-                        <span className="text-zinc-600 text-[11px]">v1.2.0-stable</span>
+                        <div className="flex items-center gap-4">
+                           <span className="text-zinc-600 text-[10px] font-mono">v2.0.0-stateful</span>
+                           {isDeploying && (
+                             <button className="px-3 py-1 bg-red-500/10 text-red-500 rounded-md text-[10px] font-bold border border-red-500/20 hover:bg-red-500/20 transition-all">
+                               Abort
+                             </button>
+                           )}
+                        </div>
                       </div>
-                      <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar pr-2 leading-relaxed">
-                         <div className="text-zinc-600">[SYSTEM] Pipeline initialized...</div>
-                         <div className="text-zinc-600">[AUTH] User dev_user verified</div>
-                         <div className={`transition-all duration-500 ${deployStatus.includes('Starting') ? "text-indigo-400" : "text-zinc-500"}`}>
-                           [WAIT] Requesting resource allocation from VPS...
-                         </div>
-                         {deployStatus !== "No active deployment" && (
-                           <div className="text-indigo-400 animate-pulse">[ACTION] {deployStatus}</div>
+                      <div className="p-8 font-mono text-[13px] h-[400px] overflow-y-auto custom-scrollbar bg-black/20">
+                         {activeDeployTask?.Logs?.map((log: string, idx: number) => (
+                           <div key={idx} className={`mb-1.5 flex gap-4 animate-in slide-in-from-left-2 duration-300 ${log.includes('Failed') ? "text-red-400" : log.includes('Success') || log.includes('Completed') ? "text-emerald-400" : "text-zinc-500"}`}>
+                              <span className="text-zinc-700 select-none">[{new Date().toLocaleTimeString([], { hour12: false })}]</span>
+                              <span className="flex-1 whitespace-pre-wrap">{log}</span>
+                           </div>
+                         ))}
+                         
+                         {(!activeDeployTask || activeDeployTask.Logs?.length === 0) && (
+                            <div className="text-zinc-700 italic">Waiting for deployment artifacts...</div>
                          )}
+                         
                          {deployStatus.includes('Success') && vps && (
-                           <div className="text-emerald-500 font-bold mt-2">✨ DEPLOYMENT SUCCESSFUL: Application is live at {deployDomain || vps.ip}:{deployPort}</div>
-                         )}
-                         {deployStatus.includes('Failed') && (
-                           <div className="text-red-500 font-bold mt-2">❌ DEPLOYMENT FAILED: Check system logs for details.</div>
+                            <div className="mt-8 p-6 bg-emerald-500/5 border border-emerald-500/20 rounded-2xl animate-in zoom-in-95">
+                               <div className="flex items-center gap-4 mb-4">
+                                  <div className="p-3 bg-emerald-500/10 rounded-xl">
+                                     <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                                  </div>
+                                  <div>
+                                     <h4 className="font-bold text-white text-lg">Deployment Successful!</h4>
+                                     <p className="text-emerald-500/60 text-sm">Your application is now live and reachable.</p>
+                                  </div>
+                               </div>
+                               <div className="flex items-center gap-3">
+                                  <a href={`http://${deployDomain || vps.ip}${deployPort ? ':' + deployPort : ''}`} target="_blank" rel="noopener noreferrer" className="flex-1 py-3 bg-emerald-500 hover:bg-emerald-400 text-black font-bold rounded-xl text-center transition-all flex items-center justify-center gap-2">
+                                     Visit Website <Globe className="w-4 h-4" />
+                                  </a>
+                                  <button className="px-6 py-3 bg-zinc-800 text-zinc-300 font-bold rounded-xl hover:bg-zinc-700 transition-all">
+                                     View Settings
+                                  </button>
+                               </div>
+                            </div>
                          )}
                       </div>
                    </div>
                 </div>
               </div>
+
             ) : (
               <div className="flex-1 flex flex-col items-center justify-center p-12 text-center animate-in zoom-in-95 duration-500">
                 <Server className="w-20 h-20 text-zinc-800 mb-6" />
@@ -1169,10 +1398,23 @@ export default function VpsDetailsPage() {
                 <RefreshCw className="w-4 h-4" /> Rename
              </button>
              {contextMenu.item?.is_dir && (
-               <button onClick={() => { addTerminal(fileMgrPath === '.' ? contextMenu.item!.name : `${fileMgrPath}/${contextMenu.item!.name}`); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-zinc-400 hover:bg-indigo-600 hover:text-white flex items-center gap-3 transition-colors">
-                  <TerminalIcon className="w-4 h-4" /> Open in Terminal
-               </button>
+               <>
+                 <button onClick={() => { addTerminal(fileMgrPath === '.' ? contextMenu.item!.name : `${fileMgrPath}/${contextMenu.item!.name}`); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-zinc-400 hover:bg-indigo-600 hover:text-white flex items-center gap-3 transition-colors">
+                    <TerminalIcon className="w-4 h-4" /> Open in Terminal
+                 </button>
+                 <button onClick={() => { 
+                   setDeployWizardConfig({ 
+                     path: fileMgrPath === '.' ? contextMenu.item!.name : `${fileMgrPath}/${contextMenu.item!.name}`, 
+                     source: "local" 
+                   }); 
+                   setIsDeployWizardOpen(true);
+                   setContextMenu(null); 
+                 }} className="w-full text-left px-4 py-2 text-sm text-indigo-400 hover:bg-indigo-600 hover:text-white flex items-center gap-3 transition-colors">
+                    <Rocket className="w-4 h-4" /> Deploy Folder
+                 </button>
+               </>
              )}
+
              <button onClick={() => { handleDownload(contextMenu.item!); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-zinc-400 hover:bg-indigo-600 hover:text-white flex items-center gap-3 transition-colors">
                 <Download className="w-4 h-4" /> Download
              </button>
@@ -1183,11 +1425,342 @@ export default function VpsDetailsPage() {
           </div>
         </>
       )}
+      {/* Deployment Wizard Modal */}
+      {isDeployWizardOpen && (
+        <DeployWizard 
+          config={deployWizardConfig} 
+          onClose={() => setIsDeployWizardOpen(false)} 
+          onDeploy={(cfg) => {
+            handleDeploy(cfg);
+            setIsDeployWizardOpen(false);
+            setSidebarView("deploy");
+          }}
+          vps={vps}
+        />
+      )}
     </div>
   );
 }
 
+function DeployWizard({ config, onClose, onDeploy, vps }: { config: any; onClose: () => void; onDeploy: (cfg: any) => void; vps: VPS }) {
+  const [step, setStep] = useState(1);
+  const [detectedType, setDetectedType] = useState("auto");
+  const [isDetecting, setIsDetecting] = useState(true);
+  const [gitToken, setGitToken] = useState("");
+  const [envVars, setEnvVars] = useState<{ key: string, value: string }[]>([{ key: "", value: "" }]);
+
+  const [localConfig, setLocalConfig] = useState({
+    project_name: config.path.split('/').pop() || "my-app",
+    port: "3000",
+    domain: "",
+    use_docker: false,
+    build_command: "",
+    start_command: "",
+    app_path: `/var/www/${config.path.split('/').pop() || "my-app"}`,
+  });
+
+
+  useEffect(() => {
+    const detect = async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:8080/deploy/detect?user_id=dev_user&path=${config.path}`);
+        if (res.ok) {
+          const data = await res.json();
+          setDetectedType(data.type);
+          if (data.type === "docker") setLocalConfig(prev => ({ ...prev, use_docker: true }));
+        }
+      } catch (err) {} finally {
+        setIsDetecting(false);
+      }
+    };
+    detect();
+  }, [config.path]);
+
+  const handleNext = () => setStep(prev => prev + 1);
+
+  const addEnvVar = () => setEnvVars([...envVars, { key: "", value: "" }]);
+  const updateEnvVar = (index: number, key: string, value: string) => {
+    const newVars = [...envVars];
+    newVars[index] = { key, value };
+    setEnvVars(newVars);
+  };
+  const removeEnvVar = (index: number) => setEnvVars(envVars.filter((_, i) => i !== index));
+
+  return (
+    <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+      <div className="bg-[#18181a] border border-zinc-800 w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="px-8 py-6 border-b border-zinc-800 flex items-center justify-between bg-[#0d0d0e]">
+          <div className="flex items-center gap-4">
+            <div className="p-2.5 bg-indigo-600/20 rounded-xl">
+               <Rocket className="w-6 h-6 text-indigo-500" />
+            </div>
+            <div>
+              <h3 className="text-xl font-bold">Smart Deployment Wizard</h3>
+              <p className="text-zinc-500 text-sm">Deploying from: <span className="text-indigo-400 font-mono text-xs">{config.path}</span></p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-xl transition-colors">
+            <XCircle className="w-6 h-6 text-zinc-600" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-8">
+          {/* Stepper */}
+          <div className="flex items-center gap-4 mb-10">
+             {[1, 2, 3, 4].map((s) => (
+               <React.Fragment key={s}>
+                 <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm transition-all ${step === s ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/20 scale-110" : step > s ? "bg-emerald-500/20 text-emerald-500" : "bg-zinc-900 text-zinc-600 border border-zinc-800"}`}>
+                    {step > s ? <CheckCircle2 className="w-5 h-5" /> : s}
+                 </div>
+                 {s < 4 && <div className={`flex-1 h-[2px] rounded-full transition-all ${step > s ? "bg-emerald-500/50" : "bg-zinc-800"}`} />}
+               </React.Fragment>
+             ))}
+          </div>
+
+          {step === 1 && (
+            <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-300">
+               <div className="grid grid-cols-2 gap-6">
+                  <div className="space-y-2.5">
+                    <label className="text-xs font-bold uppercase text-zinc-500 tracking-widest">Project Name</label>
+                    <input 
+                      value={localConfig.project_name} 
+                      onChange={e => setLocalConfig({...localConfig, project_name: e.target.value})} 
+                      className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2.5">
+                    <label className="text-xs font-bold uppercase text-zinc-500 tracking-widest">Target Port</label>
+                    <input 
+                      value={localConfig.port} 
+                      onChange={e => setLocalConfig({...localConfig, port: e.target.value})} 
+                      className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+               </div>
+
+               <div className="p-6 bg-[#0d0d0e] border border-zinc-800/50 rounded-2xl flex items-center justify-between">
+                  <div>
+                    <h4 className="font-bold text-sm mb-1">Language Detection</h4>
+                    <p className="text-xs text-zinc-500">Auto-analyzing project structure...</p>
+                  </div>
+                  {isDetecting ? (
+                    <RefreshCw className="w-5 h-5 text-indigo-500 animate-spin" />
+                  ) : (
+                    <div className="flex items-center gap-3">
+                       <span className="px-3 py-1 bg-indigo-600/10 text-indigo-400 rounded-full text-xs font-bold uppercase tracking-wider border border-indigo-600/20">
+                          {detectedType}
+                       </span>
+                       <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                    </div>
+                  )}
+               </div>
+
+               <div className="flex items-center justify-between p-6 bg-indigo-600/5 border border-indigo-500/10 rounded-2xl">
+                  <div className="flex items-center gap-4">
+                     <div className="p-3 bg-indigo-600/10 rounded-xl">
+                        <Database className="w-6 h-6 text-indigo-500" />
+                     </div>
+                     <div>
+                        <h4 className="font-bold text-sm">Containerize with Docker?</h4>
+                        <p className="text-xs text-zinc-500">Recommended for isolation and consistency.</p>
+                     </div>
+                  </div>
+                  <button 
+                    onClick={() => setLocalConfig({...localConfig, use_docker: !localConfig.use_docker})}
+                    className={`w-14 h-7 rounded-full relative transition-all ${localConfig.use_docker ? "bg-indigo-600 shadow-inner" : "bg-zinc-800"}`}
+                  >
+                    <div className={`absolute top-1 w-5 h-5 bg-white rounded-full transition-all shadow-md ${localConfig.use_docker ? "left-8" : "left-1"}`} />
+                  </button>
+               </div>
+            </div>
+          )}
+
+          {step === 2 && (
+            <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-300">
+               {config.source === "git" && (
+                 <div className="space-y-2.5">
+                    <label className="text-xs font-bold uppercase text-zinc-500 tracking-widest flex items-center gap-2">
+                       <Lock className="w-3 h-3" /> Private Repo Token (Optional)
+                    </label>
+                    <input 
+                      type="password"
+                      value={gitToken} 
+                      onChange={e => setGitToken(e.target.value)} 
+                      placeholder="Personal Access Token (PAT)"
+                      className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all"
+                    />
+                    <p className="text-[10px] text-zinc-600 italic">Needed for cloning private GitHub/GitLab repositories.</p>
+                 </div>
+               )}
+
+               <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                     <label className="text-xs font-bold uppercase text-zinc-500 tracking-widest">Environment Variables (.env)</label>
+                     <button onClick={addEnvVar} className="text-[10px] bg-indigo-600/10 text-indigo-400 px-2 py-1 rounded hover:bg-indigo-600/20 transition-all font-bold">+ ADD VAR</button>
+                  </div>
+                  <div className="space-y-2 max-h-56 overflow-y-auto pr-2 custom-scrollbar">
+                     {envVars.map((v, i) => (
+                       <div key={i} className="flex gap-2">
+                          <input 
+                            placeholder="KEY" 
+                            value={v.key} 
+                            onChange={e => updateEnvVar(i, e.target.value, v.value)} 
+                            className="flex-1 bg-[#0d0d0e] border border-zinc-800 rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-indigo-500" 
+                          />
+                          <input 
+                            placeholder="VALUE" 
+                            value={v.value} 
+                            onChange={e => updateEnvVar(i, v.key, e.target.value)} 
+                            className="flex-1 bg-[#0d0d0e] border border-zinc-800 rounded-lg px-3 py-2 text-xs font-mono outline-none focus:border-indigo-500" 
+                          />
+                          <button onClick={() => removeEnvVar(i)} className="p-2 text-zinc-600 hover:text-red-400"><Trash className="w-3.5 h-3.5" /></button>
+                       </div>
+                     ))}
+                  </div>
+               </div>
+            </div>
+          )}
+
+          {step === 3 && (
+            <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-300">
+               <div className="space-y-2.5">
+                  <label className="text-xs font-bold uppercase text-zinc-500 tracking-widest flex items-center justify-between">
+                     App Directory on VPS
+                     <span className="text-[10px] text-indigo-400 font-normal">Recommended: /var/www</span>
+                  </label>
+                  <div className="relative">
+                    <Folder className="absolute left-4 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-zinc-600" />
+                    <input 
+                      value={localConfig.app_path} 
+                      onChange={e => setLocalConfig({...localConfig, app_path: e.target.value})} 
+                      placeholder={`/var/www/${localConfig.project_name}`}
+                      className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl pl-11 pr-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all font-mono"
+                    />
+                  </div>
+               </div>
+
+               <div className="space-y-2.5">
+                  <label className="text-xs font-bold uppercase text-zinc-500 tracking-widest">Custom Domain (Optional)</label>
+                  <div className="relative">
+                    <Globe className="absolute left-4 top-1/2 -translate-y-1/2 w-4.5 h-4.5 text-zinc-600" />
+                    <input 
+                      value={localConfig.domain} 
+                      onChange={e => setLocalConfig({...localConfig, domain: e.target.value})} 
+                      placeholder="e.g. myapp.com"
+                      className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl pl-11 pr-4 py-3 text-sm focus:border-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+               </div>
+
+               <div className="grid grid-cols-1 gap-4">
+                  <div className="space-y-2.5">
+                    <label className="text-xs font-bold uppercase text-zinc-500 tracking-widest">Build Command</label>
+                    <input 
+                      value={localConfig.build_command} 
+                      onChange={e => setLocalConfig({...localConfig, build_command: e.target.value})} 
+                      placeholder="Leave empty for auto-detect"
+                      className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-xs font-mono focus:border-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2.5">
+                    <label className="text-xs font-bold uppercase text-zinc-500 tracking-widest">Start Command</label>
+                    <input 
+                      value={localConfig.start_command} 
+                      onChange={e => setLocalConfig({...localConfig, start_command: e.target.value})} 
+                      placeholder="Leave empty for auto-detect"
+                      className="w-full bg-[#0d0d0e] border border-zinc-800 rounded-xl px-4 py-3 text-xs font-mono focus:border-indigo-500 outline-none transition-all"
+                    />
+                  </div>
+               </div>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="space-y-8 animate-in zoom-in-95 duration-300 py-4 text-center">
+               <div className="w-24 h-24 bg-indigo-600/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Rocket className="w-12 h-12 text-indigo-500 animate-bounce" />
+               </div>
+               <div className="space-y-2">
+                 <h3 className="text-2xl font-bold">Ready to Launch?</h3>
+                 <p className="text-zinc-500 text-sm max-w-sm mx-auto">
+                    Everything is set. Application will be deployed to <span className="text-zinc-300 font-bold">{vps.ip}:{localConfig.port}</span>.
+                 </p>
+               </div>
+               
+               <div className="bg-[#0d0d0e] border border-zinc-800 rounded-2xl p-6 text-left space-y-3">
+                  <div className="flex justify-between text-xs">
+                     <span className="text-zinc-600 font-bold uppercase tracking-wider">Source</span>
+                     <span className="text-indigo-400 font-mono">{config.source === "local" ? "Local Directory" : "Repository"}</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                     <span className="text-zinc-600 font-bold uppercase tracking-wider">Env Vars</span>
+                     <span className="text-zinc-300">{envVars.filter(v => v.key).length} keys defined</span>
+                  </div>
+                  <div className="flex justify-between text-xs">
+                     <span className="text-zinc-600 font-bold uppercase tracking-wider">Platform</span>
+                     <span className="text-emerald-500 uppercase font-bold tracking-widest">{detectedType}</span>
+                  </div>
+               </div>
+            </div>
+          )}
+        </div>
+
+        <div className="px-8 py-6 border-t border-zinc-800 flex justify-between items-center bg-[#0d0d0e]">
+          <button 
+            disabled={step === 1}
+            onClick={() => setStep(prev => prev - 1)}
+            className="px-6 py-2.5 text-sm font-bold text-zinc-500 hover:text-zinc-200 disabled:opacity-0 transition-all"
+          >
+            Back
+          </button>
+          <div className="flex items-center gap-3">
+             <button 
+               onClick={onClose}
+               className="px-6 py-2.5 text-sm font-bold text-zinc-500 hover:text-white transition-all"
+             >
+               Cancel
+             </button>
+             <button 
+               onClick={step === 4 ? () => {
+                 const envVarsObj = envVars.reduce((acc, curr) => {
+                   if (curr.key) acc[curr.key] = curr.value;
+                   return acc;
+                 }, {} as Record<string, string>);
+
+                 onDeploy({
+                   user_id: "dev_user",
+                   project_name: localConfig.project_name,
+                   deploy_source: config.source,
+                   local_path: config.path,
+                   git_token: gitToken,
+                   type: detectedType,
+                   use_docker: localConfig.use_docker,
+                   port: localConfig.port,
+                   domain: localConfig.domain,
+                   build_command: localConfig.build_command,
+                   start_command: localConfig.start_command,
+                   app_path: localConfig.app_path,
+                   repo_url: config.source === "git" ? config.path : "",
+                   branch: "main",
+                   env_vars: envVarsObj
+                 });
+
+               } : handleNext}
+               className="px-10 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-600/20 transition-all active:scale-95"
+             >
+               {step === 4 ? "Start Deployment" : "Continue"}
+             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
 const TerminalComponent = ({ vps, initialPath, active }: { vps: VPS, initialPath?: string, active: boolean }) => {
+
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
