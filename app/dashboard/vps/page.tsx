@@ -13,6 +13,9 @@ import {
   ChevronDown,
 } from "lucide-react";
 import Link from "next/link";
+import { api } from "../../../lib/api";
+import { ENDPOINTS } from "../../../lib/endpoints";
+import { useAuth } from "../../../contexts/AuthContext";
 
 interface VPS {
   id: string;
@@ -24,6 +27,7 @@ interface VPS {
 }
 
 export default function VpsListPage() {
+  const { user } = useAuth();
   const [vpsList, setVpsList] = useState<VPS[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -33,9 +37,9 @@ export default function VpsListPage() {
   const [newVps, setNewVps] = useState({ project_name: "", ip: "", ssh_user: "root", ssh_pass: "" });
 
   const fetchVps = async () => {
+    if (!user?._id) return;
     try {
-      const res = await fetch("http://127.0.0.1:8080/vps/list?user_id=dev_user");
-      const data = await res.json();
+      const { data } = await api.get(`${ENDPOINTS.VPS.LIST}?user_id=${user._id}`);
       setVpsList(data || []);
     } catch (err) {
       console.error("Failed to fetch VPS list", err);
@@ -45,16 +49,20 @@ export default function VpsListPage() {
   };
 
   useEffect(() => {
-    fetchVps();
-  }, []);
+    if (user) {
+      fetchVps();
+    }
+  }, [user]);
 
   const handleAddVps = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user?._id) return;
     try {
-      await fetch("http://127.0.0.1:8080/vps/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({ ...newVps, user_id: "dev_user" }),
+      await api.post(ENDPOINTS.VPS.SAVE, { 
+        ...newVps, 
+        user_id: user._id 
+      }, {
+        headers: { "X-User-ID": user._id }
       });
       setShowAddModal(false);
       setNewVps({ project_name: "", ip: "", ssh_user: "root", ssh_pass: "" });
@@ -66,12 +74,13 @@ export default function VpsListPage() {
 
   const handleUpdateVps = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!showEditModal) return;
+    if (!showEditModal || !user?._id) return;
     try {
-      await fetch("http://127.0.0.1:8080/vps/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({ ...showEditModal, user_id: "dev_user" }),
+      await api.post(ENDPOINTS.VPS.UPDATE, { 
+        ...showEditModal, 
+        user_id: user._id 
+      }, {
+        headers: { "X-User-ID": user._id }
       });
       setShowEditModal(null);
       fetchVps();
@@ -81,12 +90,13 @@ export default function VpsListPage() {
   };
 
   const handleDeleteVps = async (id: string) => {
-    if (!confirm("Are you sure you want to delete this VPS?")) return;
+    if (!confirm("Are you sure you want to delete this VPS?") || !user?._id) return;
     try {
-      await fetch("http://127.0.0.1:8080/vps/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({ vps_id: id, user_id: "dev_user" }),
+      await api.post(ENDPOINTS.VPS.DELETE, { 
+        vps_id: id, 
+        user_id: user._id 
+      }, {
+        headers: { "X-User-ID": user._id }
       });
       fetchVps();
     } catch (err) {
@@ -126,6 +136,16 @@ export default function VpsListPage() {
   return (
     <div className="min-h-screen bg-[#0a0a0b] text-zinc-100 p-8 font-sans">
       <div className="max-w-7xl mx-auto">
+        <Link 
+          href="/dashboard" 
+          className="inline-flex items-center gap-2 text-zinc-500 hover:text-indigo-400 mb-6 transition-colors group"
+        >
+          <div className="w-6 h-6 rounded-full bg-zinc-900 flex items-center justify-center group-hover:bg-indigo-500/10 transition-colors">
+            <ChevronUp className="w-3 h-3 -rotate-90" />
+          </div>
+          <span className="text-sm font-medium">Back to Dashboard</span>
+        </Link>
+
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
           <div>
             <h1 className="text-3xl font-bold flex items-center gap-3">

@@ -1,23 +1,27 @@
 /**
  * Centralized API endpoints configuration.
- * This makes it easy to manage all routes in one place.
+ * All paths are relative to their respective microservice baseURL.
  */
 
 export const ENDPOINTS = {
-  // Auth Microservice (port 5001)
+  // Auth Microservice (prefixed with /api/auth in authApi)
   AUTH: {
-    LOGIN: '/auth/login',
-    REGISTER: '/auth/register',
-    ME: '/auth/me',
+    LOGIN: '/login',
+    REGISTER: '/register',
+    ME: '/me',
   },
   
-  // Core Microservice (port 5000)
-  CLIENTS: {
-    GET_ALL: '/clients',
-    CREATE: '/clients',
+  // VPS Service (prefixed with /vps in api calls)
+  VPS: {
+    LIST: '/vps/list',
+    SAVE: '/vps/save',
+    UPDATE: '/vps/update',
+    DELETE: '/vps/delete',
   },
+
+  // Deployment Service
   DEPLOYMENTS: {
-    GET_ALL: '/deployments',
-    STATUS: '/deployments/status',
+    LIST: '/deploy/list',
+    STATUS: '/deploy/status',
   }
 };

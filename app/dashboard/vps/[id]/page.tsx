@@ -42,6 +42,9 @@ import {
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
+import { api } from "../../../../lib/api";
+import { ENDPOINTS } from "../../../../lib/endpoints";
+import { useAuth } from "../../../../contexts/AuthContext";
 
 interface VPS {
   id: string;
@@ -101,6 +104,7 @@ function FeatureBox({ icon, label, value }: { icon: React.ReactNode; label: stri
 }
 
 export default function VpsDetailsPage() {
+  const { user } = useAuth();
   const { id } = useParams();
   const router = useRouter();
   const [vps, setVps] = useState<VPS | null>(null);
@@ -111,6 +115,8 @@ export default function VpsDetailsPage() {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [fileMgrPath, setFileMgrPath] = useState(".");
   const [isConnecting, setIsConnecting] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [isDeploying, setIsDeploying] = useState(false);
   const [deployLog, setDeployLog] = useState<string[]>([]);
   
@@ -251,13 +257,11 @@ export default function VpsDetailsPage() {
     if (!activeFile || isDiffView) return;
     
     const fetchContent = async () => {
+      if (!user?._id) return;
       setIsEditorLoading(true);
       try {
-        const res = await fetch(`http://127.0.0.1:8080/files/read?user_id=dev_user&path=${activeFile}`);
-        if (res.ok) {
-          const text = await res.text();
-          setEditorContent(text);
-        }
+        const res = await api.get(`/files/read?user_id=${user._id}&path=${activeFile}`);
+        setEditorContent(res.data);
       } catch (err) {
         console.error("Failed to fetch file content:", err);
       } finally {
@@ -266,15 +270,16 @@ export default function VpsDetailsPage() {
     };
     
     fetchContent();
-  }, [activeFile, isDiffView]);
+  }, [activeFile, isDiffView, user]);
 
   // Fetch VPS details
   useEffect(() => {
     const fetchDetails = async () => {
+      if (!user?._id) return;
       try {
-        const res = await fetch(`http://127.0.0.1:8080/vps/list?user_id=dev_user`);
-        const data = await res.json();
-        const found = data.find((v: any) => v.id === id || v._id === id);
+        const vpsId = Array.isArray(id) ? id[0] : id;
+        const { data } = await api.get(`${ENDPOINTS.VPS.LIST}?user_id=${user._id}`);
+        const found = data.find((v: any) => v.id === vpsId || v._id === vpsId);
         if (found) {
           setVps(found);
           handleConnect(found);
@@ -288,56 +293,59 @@ export default function VpsDetailsPage() {
       }
     };
     fetchDetails();
-  }, [id, router]);
+  }, [id, router, user]);
 
   const handleConnect = async (v: VPS) => {
+    if (!user?._id) return;
     setIsConnecting(true);
+    setConnectionError(null);
     try {
-      const res = await fetch("http://127.0.0.1:8080/connect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({
-          user_id: "dev_user",
-          project_name: v.project_name,
-          vps_ip: v.ip,
-          ssh_user: v.ssh_user,
-          ssh_pass: v.ssh_pass
-        }),
+      console.log(`🔌 [FRONTEND] Connecting to VPS: ${v.ip} for user: ${user._id}`);
+      const res = await api.post("/vps/connect", {
+        user_id: user._id,
+        project_name: v.project_name,
+        vps_ip: v.ip,
+        ssh_user: v.ssh_user,
+        ssh_pass: v.ssh_pass
+      }, {
+        headers: { "X-User-ID": user._id }
       });
-      if (res.ok) {
-        fetchMetrics();
-        fetchFiles(".");
-      }
-    } catch (err) {} finally {
+      console.log("✅ [FRONTEND] Connection successful:", res.data);
+      setIsConnected(true);
+      fetchMetrics();
+      fetchFiles(".");
+    } catch (err: any) {
+      console.error("❌ [FRONTEND] Connection failed:", err);
+      const msg = err.response?.data?.message || err.message || "Failed to establish SSH session";
+      setConnectionError(msg);
+      // Don't alert here to avoid annoying popups, but we'll show it in the UI
+    } finally {
       setIsConnecting(false);
     }
   };
 
   const fetchMetrics = async () => {
+    if (!user?._id) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8080/metrics?user_id=dev_user`);
-      if (res.ok) {
-        const data = await res.json();
-        setMetrics(data);
-      }
+      const res = await api.get(`/metrics?user_id=${user._id}`);
+      setMetrics(res.data);
     } catch (err) {}
   };
 
   const fetchFiles = async (path: string) => {
+    if (!user?._id) return;
     setIsFilesLoading(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8080/files/list?user_id=dev_user&path=${path}`);
-      if (res.ok) {
-        const data: FileItem[] = await res.json();
-        const sorted = (data || []).sort((a, b) => {
-          if (a.is_dir && !b.is_dir) return -1;
-          if (!a.is_dir && b.is_dir) return 1;
-          return a.name.localeCompare(b.name);
-        });
-        setFiles(sorted);
-        setFileMgrPath(path);
-        fetchGitInfo(path);
-      }
+      const res = await api.get(`/files/list?user_id=${user._id}&path=${path}`);
+      const data: FileItem[] = res.data;
+      const sorted = (data || []).sort((a, b) => {
+        if (a.is_dir && !b.is_dir) return -1;
+        if (!a.is_dir && b.is_dir) return 1;
+        return a.name.localeCompare(b.name);
+      });
+      setFiles(sorted);
+      setFileMgrPath(path);
+      fetchGitInfo(path);
     } catch (err) {} finally {
       setIsFilesLoading(false);
     }
@@ -359,9 +367,10 @@ export default function VpsDetailsPage() {
       const parent = parts.join("/") || (fileMgrPath.startsWith("/") ? "/" : ".");
 
       try {
-        const res = await fetch(`http://127.0.0.1:8080/files/list?user_id=dev_user&path=${parent}`);
-        if (res.ok) {
-          const data = await res.json();
+        if (!user?._id) return;
+        const res = await api.get(`/files/list?user_id=${user._id}&path=${parent}`);
+        if (res.status === 200) {
+          const data = res.data;
           const suggestions = (data.files || data || [])
             .filter((f: any) => f.is_dir && f.name.toLowerCase().startsWith(partial.toLowerCase()) && f.name !== partial)
             .map((f: any) => f.name)
@@ -391,16 +400,17 @@ export default function VpsDetailsPage() {
 
   const fetchGitInfo = async (path: string) => {
     setIsGitLoading(true);
+    if (!user?._id) return;
     try {
       const [statusRes, branchRes, branchesListRes] = await Promise.all([
-        fetch(`http://127.0.0.1:8080/git/status?user_id=dev_user&path=${path}`),
-        fetch(`http://127.0.0.1:8080/git/branch?user_id=dev_user&path=${path}`),
-        fetch(`http://127.0.0.1:8080/git/branches?user_id=dev_user&path=${path}`)
+        api.get(`/git/status?user_id=${user._id}&path=${path}`),
+        api.get(`/git/branch?user_id=${user._id}&path=${path}`),
+        api.get(`/git/branches?user_id=${user._id}&path=${path}`)
       ]);
       
-      if (statusRes.ok) setGitStatus((await statusRes.json()).output);
-      if (branchRes.ok) setGitBranch((await branchRes.json()).branch);
-      if (branchesListRes.ok) setGitBranches((await branchesListRes.json()).branches || []);
+      setGitStatus(statusRes.data.output);
+      setGitBranch(branchRes.data.branch);
+      setGitBranches(branchesListRes.data.branches || []);
     } catch (err) {} finally {
       setIsGitLoading(false);
     }
@@ -409,12 +419,15 @@ export default function VpsDetailsPage() {
   const executeGitCmd = async (gitCmd: string) => {
     setIsGitActionLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:8080/git/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({ user_id: "dev_user", path: fileMgrPath, command: gitCmd }),
+      if (!user?._id) return false;
+      const res = await api.post("/git/run", { 
+        user_id: user._id, 
+        path: fileMgrPath, 
+        command: gitCmd 
+      }, {
+        headers: { "X-User-ID": user._id }
       });
-      const data = await res.json();
+      const data = res.data;
       if (data.success) fetchGitInfo(fileMgrPath);
       return data.success;
     } catch (err) { return false; } finally {
@@ -438,8 +451,9 @@ export default function VpsDetailsPage() {
     setIsDiffView(true);
     setDiffFile(file);
     try {
-      const res = await fetch(`http://127.0.0.1:8080/git/diff?user_id=dev_user&path=${fileMgrPath}&file=${file}&staged=${staged}`);
-      const data = await res.json();
+      if (!user?._id) return;
+      const res = await api.get(`/git/diff?user_id=${user._id}&path=${fileMgrPath}&file=${file}&staged=${staged}`);
+      const data = res.data;
       setDiffContent(data.diff || "No changes detected or binary file.");
     } catch (err) {} finally {
       setIsEditorLoading(false);
@@ -459,8 +473,9 @@ export default function VpsDetailsPage() {
     if (!searchQuery) return;
     setIsSearching(true);
     try {
-      const res = await fetch(`http://127.0.0.1:8080/search?user_id=dev_user&path=${fileMgrPath}&query=${encodeURIComponent(searchQuery)}`);
-      const data = await res.json();
+      if (!user?._id) return;
+      const res = await api.get(`/search?user_id=${user._id}&path=${fileMgrPath}&query=${encodeURIComponent(searchQuery)}`);
+      const data = res.data;
       setSearchResults(data.output ? data.output.split('\n').filter((l: string) => l.trim()) : []);
     } catch (err) {} finally {
       setIsSearching(false);
@@ -480,13 +495,15 @@ export default function VpsDetailsPage() {
   };
 
   const handleSaveFile = async () => {
-    if (!activeFile) return;
+    if (!activeFile || !user?._id) return;
     setIsSaving(true);
     try {
-      await fetch("http://127.0.0.1:8080/files/write", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({ user_id: "dev_user", path: activeFile, content: editorContent }),
+      await api.post("/files/write", { 
+        user_id: user._id, 
+        path: activeFile, 
+        content: editorContent 
+      }, {
+        headers: { "X-User-ID": user._id }
       });
     } catch (err) {} finally {
       setIsSaving(false);
@@ -494,64 +511,74 @@ export default function VpsDetailsPage() {
   };
 
   const handleCreateFile = async () => {
+    if (!user?._id) return;
     const name = prompt("Enter file name:");
     if (!name) return;
     const path = fileMgrPath === "." ? name : `${fileMgrPath}/${name}`;
     try {
-      await fetch("http://127.0.0.1:8080/files/write", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({ user_id: "dev_user", path, content: "" }),
+      await api.post("/files/write", { 
+        user_id: user._id, 
+        path, 
+        content: "" 
+      }, {
+        headers: { "X-User-ID": user._id }
       });
       fetchFiles(fileMgrPath);
     } catch (err) {}
   };
 
   const handleCreateFolder = async () => {
+    if (!user?._id) return;
     const name = prompt("Enter folder name:");
     if (!name) return;
     const path = fileMgrPath === "." ? name : `${fileMgrPath}/${name}`;
     try {
-      await fetch("http://127.0.0.1:8080/files/mkdir", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({ user_id: "dev_user", path }),
+      await api.post("/files/mkdir", { 
+        user_id: user._id, 
+        path 
+      }, {
+        headers: { "X-User-ID": user._id }
       });
       fetchFiles(fileMgrPath);
     } catch (err) {}
   };
 
   const handleDeleteFile = async (item: FileItem) => {
-    if (!confirm(`Are you sure you want to delete ${item.name}?`)) return;
+    if (!user?._id || !confirm(`Are you sure you want to delete ${item.name}?`)) return;
     const path = fileMgrPath === "." ? item.name : `${fileMgrPath}/${item.name}`;
     try {
-      await fetch("http://127.0.0.1:8080/files/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({ user_id: "dev_user", path }),
+      await api.post("/files/delete", { 
+        user_id: user._id, 
+        path 
+      }, {
+        headers: { "X-User-ID": user._id }
       });
       fetchFiles(fileMgrPath);
     } catch (err) {}
   };
 
   const handleRename = async (item: FileItem) => {
+    if (!user?._id) return;
     const newName = prompt("Enter new name:", item.name);
     if (!newName || newName === item.name) return;
     const oldPath = fileMgrPath === "." ? item.name : `${fileMgrPath}/${item.name}`;
     const newPath = fileMgrPath === "." ? newName : `${fileMgrPath}/${newName}`;
     try {
-      await fetch("http://127.0.0.1:8080/files/rename", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify({ user_id: "dev_user", path: oldPath, new_path: newPath }),
+      await api.post("/files/rename", { 
+        user_id: user._id, 
+        path: oldPath, 
+        new_path: newPath 
+      }, {
+        headers: { "X-User-ID": user._id }
       });
       fetchFiles(fileMgrPath);
     } catch (err) {}
   };
 
   const handleDownload = async (item: FileItem) => {
+    if (!user?._id) return;
     const path = fileMgrPath === "." ? item.name : `${fileMgrPath}/${item.name}`;
-    window.open(`http://127.0.0.1:8080/files/read?user_id=dev_user&path=${path}`, '_blank');
+    window.open(`http://localhost:8888/files/read?user_id=${user._id}&path=${path}`, '_blank');
   };
 
   const handleUploadClick = () => {
@@ -560,27 +587,29 @@ export default function VpsDetailsPage() {
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-
+    if (!file || !user?._id) return;
+  
     const formData = new FormData();
-    formData.append("user_id", "dev_user");
+    formData.append("user_id", user._id);
     formData.append("path", fileMgrPath);
     formData.append("file", file);
-
+  
     try {
       setIsFilesLoading(true);
-      const res = await fetch("http://127.0.0.1:8080/files/upload", {
-        method: "POST",
-        headers: { "X-User-ID": "dev_user" },
-        body: formData, 
+      await api.post("/files/upload", formData, {
+        headers: { 
+          "X-User-ID": user._id,
+          "Content-Type": "multipart/form-data" 
+        }
       });
-      if (res.ok) fetchFiles(fileMgrPath);
+      fetchFiles(fileMgrPath);
     } catch (err) {} finally {
       setIsFilesLoading(false);
     }
   };
 
   const handleDeploy = async (configOverride?: any) => {
+    if (!user?._id) return;
     const isGit = configOverride ? configOverride.deploy_source === "git" : true;
     if (isGit && !repoUrl && !configOverride) return alert("Repository URL is required");
     
@@ -588,7 +617,7 @@ export default function VpsDetailsPage() {
     setDeployStatus("Starting deployment...");
     
     const payload = configOverride || {
-      user_id: "dev_user",
+      user_id: user._id,
       project_name: projectName,
       repo_url: repoUrl,
       branch: deployBranch,
@@ -603,23 +632,14 @@ export default function VpsDetailsPage() {
     };
 
     try {
-      const res = await fetch("http://127.0.0.1:8080/deploy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-ID": "dev_user" },
-        body: JSON.stringify(payload),
+      await api.post("/deploy", payload, {
+        headers: { "X-User-ID": user._id }
       });
-      
-      if (!res.ok) throw new Error("Failed to initiate deployment");
 
       const interval = setInterval(async () => {
         try {
-          const sRes = await fetch(`http://127.0.0.1:8080/deploy/status?user_id=dev_user`);
-          if (!sRes.ok) {
-             clearInterval(interval);
-             setIsDeploying(false);
-             return;
-          }
-          const sData = await sRes.json();
+          const sRes = await api.get(`/deploy/status?user_id=${user._id}`);
+          const sData = sRes.data;
           setActiveDeployTask(sData);
           setDeployStatus(sData.Status);
           
@@ -639,12 +659,11 @@ export default function VpsDetailsPage() {
   };
 
   const handleConfirmDeployment = async () => {
+    if (!user?._id) return;
     try {
-      const res = await fetch(`http://127.0.0.1:8080/deploy/confirm?user_id=dev_user&project_name=${projectName}`, {
-        method: "POST",
-        headers: { "X-User-ID": "dev_user" }
+      await api.post(`/deploy/confirm?user_id=${user._id}&project_name=${projectName}`, {}, {
+        headers: { "X-User-ID": user._id }
       });
-      if (!res.ok) throw new Error("Failed to confirm deployment");
       setDeployStatus("Confirmation received. Resuming...");
     } catch (err: any) {
       alert(err.message);
@@ -1329,7 +1348,13 @@ export default function VpsDetailsPage() {
                      key={term.id} 
                      className={`absolute inset-0 transition-opacity duration-200 ${activeTerminalId === term.id ? "opacity-100 z-10" : "opacity-0 z-0 pointer-events-none"}`}
                    >
-                     <TerminalComponent vps={vps} initialPath={term.initialPath} active={activeTerminalId === term.id} />
+                     <TerminalComponent 
+                       vps={vps} 
+                       initialPath={term.initialPath} 
+                       active={activeTerminalId === term.id} 
+                       isConnected={isConnected}
+                       isConnecting={isConnecting}
+                     />
                    </div>
                  ))}
                </div>
@@ -1372,11 +1397,20 @@ export default function VpsDetailsPage() {
         )}
 
         <div className="flex items-center gap-5">
-           <div className="flex items-center gap-2 px-2.5 h-full">
+           {connectionError && (
+             <div className="flex items-center gap-2 px-2.5 h-full text-red-400 bg-red-400/10">
+                <XCircle className="w-3.5 h-3.5" /> <span>{connectionError}</span>
+             </div>
+           )}
+           <div className={`flex items-center gap-2 px-2.5 h-full transition-colors ${isConnected ? "text-emerald-400" : isConnecting ? "text-amber-400" : "text-zinc-500"}`}>
+              <CheckCircle2 className={`w-3.5 h-3.5 ${isConnecting ? "animate-pulse" : ""}`} /> 
+              <span>{isConnected ? "Connected" : isConnecting ? "Connecting..." : "Disconnected"}</span>
+           </div>
+           <div className="flex items-center gap-2 px-2.5 h-full border-l border-zinc-800">
               <CheckCircle2 className="w-3.5 h-3.5" /> <span>SSH: {vps.ssh_user}</span>
            </div>
            <div className="flex items-center gap-2 px-2.5 h-full">
-              <RefreshCw className={`w-3.5 h-3.5 ${isConnecting ? "animate-spin" : ""}`} /> <span>Port: 8080</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isConnecting ? "animate-spin" : ""}`} /> <span>Port: 8888</span>
            </div>
         </div>
       </div>
@@ -1443,6 +1477,7 @@ export default function VpsDetailsPage() {
 }
 
 function DeployWizard({ config, onClose, onDeploy, vps }: { config: any; onClose: () => void; onDeploy: (cfg: any) => void; vps: VPS }) {
+  const { user } = useAuth();
   const [step, setStep] = useState(1);
   const [detectedType, setDetectedType] = useState("auto");
   const [isDetecting, setIsDetecting] = useState(true);
@@ -1461,20 +1496,19 @@ function DeployWizard({ config, onClose, onDeploy, vps }: { config: any; onClose
 
 
   useEffect(() => {
+    if (!vps || !user?._id) return;
     const detect = async () => {
       try {
-        const res = await fetch(`http://127.0.0.1:8080/deploy/detect?user_id=dev_user&path=${config.path}`);
-        if (res.ok) {
-          const data = await res.json();
-          setDetectedType(data.type);
-          if (data.type === "docker") setLocalConfig(prev => ({ ...prev, use_docker: true }));
-        }
+        const res = await api.get(`/deploy/detect?user_id=${user._id}&path=${config.path}`);
+        const data = res.data;
+        setDetectedType(data.type);
+        if (data.type === "docker") setLocalConfig(prev => ({ ...prev, use_docker: true }));
       } catch (err) {} finally {
         setIsDetecting(false);
       }
     };
     detect();
-  }, [config.path]);
+  }, [config.path, user, vps]);
 
   const handleNext = () => setStep(prev => prev + 1);
 
@@ -1728,7 +1762,7 @@ function DeployWizard({ config, onClose, onDeploy, vps }: { config: any; onClose
                  }, {} as Record<string, string>);
 
                  onDeploy({
-                   user_id: "dev_user",
+                   user_id: user?._id,
                    project_name: localConfig.project_name,
                    deploy_source: config.source,
                    local_path: config.path,
@@ -1759,12 +1793,13 @@ function DeployWizard({ config, onClose, onDeploy, vps }: { config: any; onClose
 
 
 
-const TerminalComponent = ({ vps, initialPath, active }: { vps: VPS, initialPath?: string, active: boolean }) => {
-
+const TerminalComponent = ({ vps, initialPath, active, isConnected, isConnecting }: { vps: VPS, initialPath?: string, active: boolean, isConnected: boolean, isConnecting: boolean }) => {
+  const { user } = useAuth();
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<XTerm | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     if (active && fitAddonRef.current) {
@@ -1802,13 +1837,21 @@ const TerminalComponent = ({ vps, initialPath, active }: { vps: VPS, initialPath
     }, 100);
     
     xtermRef.current = term;
-    if (active) term.focus();
+    if (!active || !user?._id) return;
 
     term.writeln('\x1b[1;34m[*] \x1b[1;37mConnecting to Portway SSH Gateway...\x1b[0m');
 
+    let ws: WebSocket | null = null;
     const connectTimer = setTimeout(() => {
-      const url = new URL(`ws://127.0.0.1:8080/terminal`);
-      url.searchParams.set("user_id", "dev_user");
+      if (!user?._id || !isConnected) {
+        if (!isConnected && active) {
+           term.writeln('\x1b[1;33m[!] \x1b[1;37mWaiting for SSH session to stabilize...\x1b[0m');
+        }
+        return;
+      }
+      
+      const url = new URL(`${process.env.NEXT_PUBLIC_GATEWAY_URL?.replace('http', 'ws') || 'ws://localhost:8888'}/terminal`);
+      url.searchParams.set("user_id", user._id);
       url.searchParams.set("vps_ip", vps.ip);
       if (initialPath) url.searchParams.set("initial_path", initialPath);
 
@@ -1862,7 +1905,7 @@ const TerminalComponent = ({ vps, initialPath, active }: { vps: VPS, initialPath
       term.dispose();
       resizeObserver.disconnect();
     };
-  }, [vps]);
+  }, [vps, isConnected, retryCount, active]);
 
   return <div ref={terminalRef} className="w-full h-full p-2" />;
 };

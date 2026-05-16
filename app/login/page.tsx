@@ -33,6 +33,8 @@ export default function LoginPage() {
 
     try {
       setIsLoading(true);
+      console.log("Login attempt with email:", email);
+      console.log("Using endpoint:", ENDPOINTS.AUTH.LOGIN);
       const { data } = await authApi.post(ENDPOINTS.AUTH.LOGIN, {
         email,
         password,

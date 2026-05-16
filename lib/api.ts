@@ -1,26 +1,25 @@
 import axios from 'axios';
 import Cookies from 'js-cookie';
 
-const AUTH_API_URL = process.env.NEXT_PUBLIC_AUTH_API_URL || 'http://localhost:5001/api';
-const CORE_API_URL = process.env.NEXT_PUBLIC_CORE_API_URL || 'http://localhost:5000/api';
+const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:8888';
 
 // --- Axios Instances ---
+export const api = axios.create({
+  baseURL: GATEWAY_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
 
-// 1. Auth API Instance (Microservice running on 5001)
+// Auth specific instance (prefixed with /api/auth)
 export const authApi = axios.create({
-  baseURL: AUTH_API_URL,
+  baseURL: `${GATEWAY_URL}/api/auth`,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// 2. Core API Instance (Microservice running on 5000)
-export const coreApi = axios.create({
-  baseURL: CORE_API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-});
+export const coreApi = api;
 
 // --- Interceptors ---
 

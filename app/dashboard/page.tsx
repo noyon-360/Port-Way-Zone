@@ -1,6 +1,6 @@
 "use client";
 
-import { motion } from "framer-motion";
+import Link from "next/link";
 import { LayoutDashboard, Users, Server, Shield, LogOut } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 
@@ -18,27 +18,27 @@ export default function DashboardPage() {
         </div>
 
         <nav className="flex-1 p-4 space-y-2">
-          <a
-            href="#"
+          <Link
+            href="/dashboard"
             className="flex items-center gap-3 px-4 py-3 rounded-lg bg-primary-600/10 text-primary-500 font-medium"
           >
             <LayoutDashboard className="w-5 h-5" />
             Dashboard
-          </a>
-          <a
+          </Link>
+          <Link
             href="#"
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
           >
             <Users className="w-5 h-5" />
             Clients
-          </a>
-          <a
-            href="#"
+          </Link>
+          <Link
+            href="/dashboard/vps"
             className="flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 transition-colors"
           >
             <Server className="w-5 h-5" />
-            Deployments
-          </a>
+            VPS Management
+          </Link>
         </nav>
 
         <div className="p-4 border-t border-white/5">
@@ -68,12 +68,15 @@ export default function DashboardPage() {
             </h3>
             <p className="text-4xl font-light">12</p>
           </div>
-          <div className="glass-card p-6 rounded-xl">
-            <h3 className="text-sm font-medium text-slate-400 mb-4 uppercase tracking-wide">
+          <Link href="/dashboard/vps" className="glass-card p-6 rounded-xl hover:bg-white/5 transition-colors group">
+            <h3 className="text-sm font-medium text-slate-400 mb-4 uppercase tracking-wide group-hover:text-primary-400">
               Active Deployments
             </h3>
-            <p className="text-4xl font-light text-primary-500">8</p>
-          </div>
+            <div className="flex items-center justify-between">
+              <p className="text-4xl font-light text-primary-500">8</p>
+              <Server className="w-8 h-8 text-primary-500/20 group-hover:text-primary-500 transition-colors" />
+            </div>
+          </Link>
           <div className="glass-card p-6 rounded-xl border-t-2 border-t-accent">
             <h3 className="text-sm font-medium text-slate-400 mb-4 uppercase tracking-wide">
               System Status
